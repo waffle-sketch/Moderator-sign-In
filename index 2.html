@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fresh Hotel - Mod Sign In</title>
+<style>
+:root{--bg:#0f172a;--card:#1e293b;--line:#334155;--txt:#f1f5f9;--mute:#94a3b8;--green:#22c55e;--red:#ef4444;--blue:#3b82f6}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);font-family:system-ui,Arial,sans-serif;padding:16px}
+.wrap{max-width:520px;margin:0 auto}
+h1{font-size:22px;margin:8px 0 2px}
+.sub{color:var(--mute);font-size:14px;margin-bottom:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+label{display:block;font-size:13px;color:var(--mute);margin:10px 0 4px}
+input,select,textarea{width:100%;padding:11px;border-radius:9px;border:1px solid var(--line);background:#0b1220;color:var(--txt);font-size:16px;font-family:inherit}
+textarea{min-height:80px;resize:vertical}
+button{width:100%;padding:14px;border:0;border-radius:10px;font-size:17px;font-weight:700;color:#fff;cursor:pointer;margin-top:14px}
+.on{background:var(--green)} .off{background:var(--red)} .ghost{background:transparent;border:1px solid var(--line);color:var(--mute);font-size:14px;padding:9px;font-weight:500;margin-top:8px}
+button:disabled{opacity:.5}
+.status{display:flex;align-items:center;gap:10px;font-size:18px;font-weight:700}
+.dot{width:14px;height:14px;border-radius:50%;background:var(--red)}
+.dot.live{background:var(--green);box-shadow:0 0 10px var(--green)}
+.timer{font-size:34px;font-weight:700;margin:8px 0 0;font-variant-numeric:tabular-nums}
+.small{font-size:13px;color:var(--mute)}
+.row{border-top:1px solid var(--line);padding:10px 0;font-size:14px}
+.row:first-child{border-top:0}
+.row b{color:var(--txt)} .row span{color:var(--mute)}
+.msg{font-size:13px;margin-top:10px;min-height:18px}
+.hide{display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Fresh Hotel Mod Sign In</h1>
+  <div class="sub">Sign on when you start, sign off when you finish. The management team is notified each time.</div>
+
+  <div class="card">
+    <div class="status"><div class="dot" id="dot"></div><span id="stat">Offline</span></div>
+    <div class="timer hide" id="timer">00:00:00</div>
+    <div class="small hide" id="since"></div>
+
+    <label for="name">Your name</label>
+    <input id="name" placeholder="Mod name" autocomplete="off">
+
+    <div id="onBox">
+      <label for="act0">What are you going to be doing? (optional)</label>
+      <select id="act0"></select>
+      <button class="on" id="btnOn">Sign ON</button>
+    </div>
+
+    <div id="offBox" class="hide">
+      <label for="act">Main activity</label>
+      <select id="act"></select>
+      <label for="notes">What have you been doing?</label>
+      <textarea id="notes" placeholder="e.g. cleared spam, handled 2 reports, ran a game event"></textarea>
+      <button class="off" id="btnOff">Sign OFF</button>
+    </div>
+    <div class="msg" id="msg"></div>
+  </div>
+
+  <div class="card">
+    <b>My recent sessions</b>
+    <div id="log" style="margin-top:8px"></div>
+    <button class="ghost" id="csv">Download my log (CSV)</button>
+  </div>
+</div>
+
+<script>
+/* ======== EDIT THESE ======== */
+const DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1573008349090291782/ToXdpoIFlI-ZlsbJsQI9apWctvbkhs8oh96SqIDFRJjQkF6YET8j70RDmMko_zLt6I7z";   // keep the quote marks
+const ACTIVITIES = ["Chat moderation","Handling reports","Events / games","Helping players","Trial / training","Recruitment / interviews","Room checks","Admin / other"];
+/* ============================ */
+
+const $ = id => document.getElementById(id);
+const KEY_STATE="fh_state", KEY_LOG="fh_log", KEY_NAME="fh_name";
+const load = (k,d)=>{try{return JSON.parse(localStorage.getItem(k))??d}catch(e){return d}};
+const save = (k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
+
+ACTIVITIES.forEach(a=>{ for (const id of ["act0","act"]) { const o=document.createElement("option"); o.textContent=a; $(id).appendChild(o);} });
+$("name").value = load(KEY_NAME,"");
+
+const fmtDur = ms => { const s=Math.floor(ms/1000); return [Math.floor(s/3600),Math.floor(s%3600/60),s%60].map(n=>String(n).padStart(2,"0")).join(":"); };
+const human = ms => { const m=Math.round(ms/60000); return m<60 ? m+"m" : Math.floor(m/60)+"h "+(m%60)+"m"; };
+const clock = t => new Date(t).toLocaleString("en-GB",{weekday:"short",day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"});
+
+async function notify(title, message, tag){
+  if (!DISCORD_WEBHOOK || DISCORD_WEBHOOK.includes("PASTE_YOUR")) return "no-config";
+  try {
+    const r = await fetch(DISCORD_WEBHOOK,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({content:(tag==="green_circle"?"\uD83D\uDFE2 ":"\uD83D\uDD34 ")+"**"+title+"**\n"+message})});
+    return r.ok?"ok":"fail";
+  } catch(e){ return "fail"; }
+}
+
+let tick=null;
+function render(){
+  const st = load(KEY_STATE,null);
+  const live = !!st;
+  $("dot").classList.toggle("live",live);
+  $("stat").textContent = live ? "Online as "+st.name : "Offline";
+  $("timer").classList.toggle("hide",!live);
+  $("since").classList.toggle("hide",!live);
+  $("onBox").classList.toggle("hide",live);
+  $("offBox").classList.toggle("hide",!live);
+  $("name").disabled = live;
+  clearInterval(tick);
+  if (live){
+    $("since").textContent = "Signed on "+clock(st.start);
+    $("act").value = st.activity;
+    $("notes").value = st.notes||"";
+    const u=()=>{$("timer").textContent=fmtDur(Date.now()-st.start)}; u(); tick=setInterval(u,1000);
+  }
+  const log = load(KEY_LOG,[]).slice().reverse().slice(0,15);
+  $("log").innerHTML = log.length ? log.map(l=>
+    `<div class="row"><b>${esc(l.name)}</b> - ${human(l.end-l.start)}<br><span>${clock(l.start)} to ${clock(l.end)}</span><br><span>${esc(l.activity)}${l.notes?": "+esc(l.notes):""}</span></div>`).join("")
+    : '<div class="small">No sessions yet.</div>';
+}
+const esc = s => String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+function flash(r){
+  $("msg").style.color = r==="ok"?"#22c55e": r==="fail"?"#ef4444":"#94a3b8";
+  $("msg").textContent = r==="ok"?"Management notified.": r==="fail"?"Saved, but the notification failed to send.": "Saved. (Notifications not set up yet.)";
+}
+
+$("btnOn").onclick = async ()=>{
+  const name=$("name").value.trim();
+  if(!name){ $("msg").style.color="#ef4444"; $("msg").textContent="Enter your name first."; return; }
+  save(KEY_NAME,name);
+  const st={name,start:Date.now(),activity:$("act0").value,notes:""};
+  save(KEY_STATE,st); render();
+  flash(await notify(name+" is ONLINE","Signed on "+clock(st.start)+"\nPlanning: "+st.activity,"green_circle"));
+};
+
+$("btnOff").onclick = async ()=>{
+  const st=load(KEY_STATE,null); if(!st) return;
+  const end=Date.now(), activity=$("act").value, notes=$("notes").value.trim();
+  const rec={...st,end,activity,notes};
+  const log=load(KEY_LOG,[]); log.push(rec); save(KEY_LOG,log);
+  localStorage.removeItem(KEY_STATE); render();
+  flash(await notify(st.name+" went OFFLINE","On: "+clock(st.start)+"\nOff: "+clock(end)+"\nTime online: "+human(end-st.start)+"\nDid: "+activity+(notes?" - "+notes:""),"red_circle"));
+};
+
+$("csv").onclick = ()=>{
+  const q=v=>'"'+String(v??"").replace(/"/g,'""')+'"';
+  const rows=[["Name","Time On","Time Off","Minutes","Activity","Notes"]].concat(load(KEY_LOG,[]).map(l=>[l.name,new Date(l.start).toISOString(),new Date(l.end).toISOString(),Math.round((l.end-l.start)/60000),l.activity,l.notes]));
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([rows.map(r=>r.map(q).join(",")).join("\n")],{type:"text/csv"}));
+  a.download="my-mod-log.csv"; a.click();
+};
+
+render();
+</script>
+</body>
+</html>
